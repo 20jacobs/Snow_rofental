@@ -6,7 +6,8 @@
 #
 # - Uses paths relative to this script
 # - Reads CSV files from the repository directory
-# - Saves all figures and result tables in the same directory
+# - Creates an output folder for generated files
+# - Saves all figures and result tables in the output folder
 # - Parses timestamps and validates measurement columns
 # - Handles duplicate timestamps transparently
 # - Excludes negative measurements
@@ -19,7 +20,7 @@
 # - Exports figures and tables for reproducibility
 #
 # IMPORTANT:
-# The conventional regression p-values and confidence intervals
+# Conventional regression p-values and confidence intervals
 # assume independent residuals. Temporal autocorrelation is
 # not corrected for in this version.
 # ============================================================
@@ -41,21 +42,23 @@ from scipy.stats import linregress, t
 # Directory containing this Python script
 BASE_DIR = Path(__file__).resolve().parent
 
-# Read input data and save outputs in the same directory
+# Input CSV files remain in the repository directory
 DATA_DIR = BASE_DIR
-OUTPUT_DIR = BASE_DIR
+
+# Create an output folder for all generated files
+OUTPUT_DIR = BASE_DIR / "output"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 TIME_COL = "Date and time"
 
-# Snow year runs from July through June.
+# Snow year runs from July through June
 SEASON_START_MONTH = 7
 
-# Expected measurement interval: 10 minutes.
+# Expected measurement interval: 10 minutes
 EXPECTED_INTERVAL_MINUTES = 10
 
-# Minimum coverage required to classify a snow year as complete.
-# This is a methodological threshold and should be justified
-# in the thesis.
+# Minimum coverage required to classify a snow year as complete
+# This methodological threshold should be justified in the thesis
 MIN_SEASON_COVERAGE = 0.90
 
 STATIONS = {
@@ -264,10 +267,7 @@ def load_station_data(station_name, settings):
         duplicate_timestamp_count,
     )
     print("Negative SH measurements excluded:", negative_sh_count)
-    print(
-        "Negative SWE measurements excluded:",
-        negative_swe_count,
-    )
+    print("Negative SWE measurements excluded:", negative_swe_count)
     print("Daily records:", len(daily))
     print(
         "Days with valid SH means:",

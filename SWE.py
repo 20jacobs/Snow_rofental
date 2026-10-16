@@ -4,6 +4,8 @@
 #
 # - Reads all available data from both stations
 # - Uses paths relative to this script for portability
+# - Creates an output folder for generated files
+# - Saves the figure in the output folder
 # - Parses timestamps with or without fractional seconds
 # - Converts SWE measurements to numeric values
 # - Excludes negative SWE measurements
@@ -12,7 +14,7 @@
 # - Identifies missing measurements and large timestamp gaps
 # - Interrupts plotted lines across gaps exceeding 20 minutes
 # - Plots SWE time series for Bella Vista and Proviantdepot
-# - Saves the figure as a PDF in the repository directory
+# - Saves the figure as a PDF in the output folder
 # ============================================================
 
 from pathlib import Path
@@ -33,9 +35,12 @@ sns.set_theme(style="whitegrid")
 # Directory containing this Python script
 BASE_DIR = Path(__file__).resolve().parent
 
-# Input CSV files and output figure are stored in this directory
+# Input CSV files remain in the repository directory
 DATA_DIR = BASE_DIR
-OUTPUT_DIR = BASE_DIR
+
+# Create an output folder for all generated files
+OUTPUT_DIR = BASE_DIR / "output"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 TIME_COL = "Date and time"
 
@@ -135,8 +140,8 @@ for station, settings in STATIONS.items():
         (df[swe_col] < 0).sum()
     )
 
-    # Treat negative SWE values as invalid measurements
-    # Retain their timestamps so missing values remain visible
+    # Treat negative SWE values as invalid measurements.
+    # Retain their timestamps so missing values remain visible.
     df.loc[
         df[swe_col] < 0,
         swe_col,
@@ -153,8 +158,6 @@ for station, settings in STATIONS.items():
 
     # Identify timestamps that still have multiple records
     duplicate_mask = df[TIME_COL].duplicated(keep=False)
-
-    duplicate_timestamp_rows = int(duplicate_mask.sum())
 
     duplicate_timestamp_count = int(
         df.loc[duplicate_mask, TIME_COL].nunique()
@@ -193,8 +196,7 @@ for station, settings in STATIONS.items():
 
     gap_mask = time_gap > MAX_GAP
 
-    # A gap is defined as the interval between two consecutive
-    # timestamps exceeding the permitted maximum.
+    # Count intervals exceeding the permitted maximum
     large_gap_count = int(gap_mask.sum())
 
     # Insert NaN at the first observation after a large gap.
@@ -379,6 +381,7 @@ plt.setp(
 
 fig.tight_layout()
 
+# Save the PDF in the output folder
 output_file = (
     OUTPUT_DIR / "swe_two_stations_adjusted_timestamps.pdf"
 )
