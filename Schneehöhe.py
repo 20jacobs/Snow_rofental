@@ -1,4 +1,21 @@
 
+# ============================================================
+# SH-Analysis for all three stations
+#
+# - Performs a reproducible analysis of the available dataset
+# - Reads CSV files from the repository directory
+# - Creates an output folder for generated files
+# - Saves figures and result tables in the output folder
+# - Parses timestamps and validates measurement columns
+# - Handles duplicate timestamps transparently
+# - Excludes negative measurements
+# - Calculates descriptive statistics for each station
+# - Handles data gaps by interrupting plotted lines
+# - Supports timestamps with and without milliseconds
+# - Generates a combined time-series plot of snow depth
+# - Saves the plot as a PDF file in the output folder
+# ============================================================
+
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -11,9 +28,15 @@ from pathlib import Path
 
 sns.set_theme(style="whitegrid")
 
-BASE_DIR = Path(
-    "/Users/franzimaster/Desktop/Master_Geographie/3/Hydro/Datenanalyse"
-)
+# Directory containing this Python script
+BASE_DIR = Path(__file__).resolve().parent
+
+# Input CSV files remain in the repository directory
+DATA_DIR = BASE_DIR
+
+# Create an output folder for all generated files
+OUTPUT_DIR = BASE_DIR / "output"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 TIME_COL = "Date and time"
 
@@ -49,11 +72,11 @@ statistics = {}
 
 for station, settings in stations.items():
 
-    file_path = BASE_DIR / settings["file"]
+    file_path = DATA_DIR / settings["file"]
 
     if not file_path.exists():
         raise FileNotFoundError(
-            f"File not found: {file_path}"
+            f"Input file not found: {file_path}"
         )
 
     df = pd.read_csv(file_path)
@@ -286,9 +309,8 @@ ax.text(
 
 fig.tight_layout()
 
-output_file = (
-    BASE_DIR / "snow_depth_three_stations_cleaned.pdf"
-)
+# Save the PDF in the output folder
+output_file = OUTPUT_DIR / "snow_depth_three_stations_cleaned.pdf"
 
 fig.savefig(
     output_file,

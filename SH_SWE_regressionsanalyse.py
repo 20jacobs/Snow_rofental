@@ -1,17 +1,27 @@
 
 # ============================================================
-# SH–SWE analysis for the entire available dataset
+# SH-SWE REGRESSION ANALYSIS
 #
-# - Reads all available data from both stations
-# - Parses timestamps with or without fractional seconds
-# - Removes negative SH and SWE measurements
-# - Calculates daily means
-# - Defines snow years from July to June
-# - Identifies the seasonal SWE maximum
-# - Classifies accumulation and melting relative to that maximum
-# - Performs regressions for complete snow years
-# - Plots seasonal SWE maxima and SH at the SWE maximum date
-# - Exports tables and figures
+# Reproducible analysis for the entire available dataset
+#
+# - Uses paths relative to this script
+# - Reads CSV files from the repository directory
+# - Saves all figures and result tables in the same directory
+# - Parses timestamps and validates measurement columns
+# - Handles duplicate timestamps transparently
+# - Excludes negative measurements
+# - Calculates daily means and valid-measurement counts
+# - Defines snow years from July through June
+# - Identifies seasonal SWE maxima
+# - Evaluates seasonal data coverage
+# - Classifies accumulation and melting phases
+# - Performs pooled and snow-year-specific regressions
+# - Exports figures and tables for reproducibility
+#
+# IMPORTANT:
+# The conventional regression p-values and confidence intervals
+# assume independent residuals. Temporal autocorrelation is
+# not corrected for in this version.
 # ============================================================
 
 from pathlib import Path
@@ -19,26 +29,34 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 
-from scipy.stats import linregress
-from matplotlib.dates import AutoDateLocator, ConciseDateFormatter
+from scipy.stats import linregress, t
 
 
 # ============================================================
 # 1. SETTINGS
 # ============================================================
 
-DATA_DIR = Path(
-    "/Users/franzimaster/Desktop/Master_Geographie/3/Hydro/Datenanalyse"
-)
+# Directory containing this Python script
+BASE_DIR = Path(__file__).resolve().parent
 
-OUTPUT_DIR = DATA_DIR
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+# Read input data and save outputs in the same directory
+DATA_DIR = BASE_DIR
+OUTPUT_DIR = BASE_DIR
 
 TIME_COL = "Date and time"
 
 # Snow year runs from July through June.
 SEASON_START_MONTH = 7
+
+# Expected measurement interval: 10 minutes.
+EXPECTED_INTERVAL_MINUTES = 10
+
+# Minimum coverage required to classify a snow year as complete.
+# This is a methodological threshold and should be justified
+# in the thesis.
+MIN_SEASON_COVERAGE = 0.90
 
 STATIONS = {
     "Bella Vista": {
@@ -55,20 +73,39 @@ STATIONS = {
     },
 }
 
+PHASES = ["Accumulation", "Melting"]
+
 
 # ============================================================
 # 2. LOAD AND CLEAN DATA
 # ============================================================
 
 def load_station_data(station_name, settings):
-    """Load station data, parse timestamps, and remove negative values."""
+    """
+    Load station data, validate columns, clean measurements,
+    handle duplicate timestamps, and calculate daily means.
+
+    Negative measurements are treated as missing values.
+    Duplicate timestamps with conflicting values are aggregated
+    to one timestamp using the mean of valid measurements.
+    """
 
     file_path = DATA_DIR / settings["file"]
 
     if not file_path.exists():
-        raise FileNotFoundError(f"File not found: {file_path}")
+        raise FileNotFoundError(
+            f"File not found: {file_path}\n"
+            f"Ensure that the CSV file is in: {DATA_DIR}"
+        )
 
-    df = pd.read_csv(file_path, sep=None, engine="python")
+    df = pd.read_csv(
+        file_path,
+        sep=None,
+        engine="python",
+    )
+
+    # Normalize column names
+    df.columns = df.columns.str.strip()
 
     required_cols = [
         TIME_COL,
@@ -76,60 +113,122 @@ def load_station_data(station_name, settings):
         settings["swe_col"],
     ]
 
-    missing_cols = [col for col in required_cols if col not in df.columns]
+    missing_cols = [
+        col for col in required_cols
+        if col not in df.columns
+    ]
 
     if missing_cols:
         raise ValueError(
-            f"{station_name}: Missing columns {missing_cols}. "
+            f"{station_name}: Missing columns {missing_cols}.\n"
             f"Available columns: {list(df.columns)}"
         )
 
     df = df[required_cols].copy()
 
-    # Supports timestamps such as:
-    # 2018-03-07 14:40:00
-    # 2018-03-07 14:40:00.000
+    # --------------------------------------------------------
+    # 2.1 Parse timestamps
+    # --------------------------------------------------------
+
     df[TIME_COL] = pd.to_datetime(
         df[TIME_COL].astype(str).str.strip(),
         format="mixed",
         errors="coerce",
     )
 
-    # Convert measurement columns to numeric values.
-    df[settings["sh_col"]] = pd.to_numeric(
-        df[settings["sh_col"]], errors="coerce"
-    )
-    df[settings["swe_col"]] = pd.to_numeric(
-        df[settings["swe_col"]], errors="coerce"
-    )
+    invalid_timestamps = int(df[TIME_COL].isna().sum())
 
-    # Remove rows with invalid timestamps.
     df = df.dropna(subset=[TIME_COL]).copy()
 
-    # Remove negative measurements by treating them as missing.
-    df.loc[df[settings["sh_col"]] < 0, settings["sh_col"]] = np.nan
-    df.loc[df[settings["swe_col"]] < 0, settings["swe_col"]] = np.nan
+    # --------------------------------------------------------
+    # 2.2 Convert measurements to numeric values
+    # --------------------------------------------------------
 
-    # Sort and report duplicate timestamps.
-    df = df.sort_values(TIME_COL)
-
-    duplicate_count = df[TIME_COL].duplicated().sum()
-
-    if duplicate_count:
-        print(
-            f"Warning: {station_name} contains "
-            f"{duplicate_count} duplicate timestamps."
+    for col in [settings["sh_col"], settings["swe_col"]]:
+        df[col] = pd.to_numeric(
+            df[col],
+            errors="coerce",
         )
 
-    df = df.set_index(TIME_COL)
+    # Count negative values before replacing them
+    negative_sh_count = int(
+        (df[settings["sh_col"]] < 0).sum()
+    )
 
-    # Calculate daily means from all valid observations.
+    negative_swe_count = int(
+        (df[settings["swe_col"]] < 0).sum()
+    )
+
+    # Negative values are invalid measurements
+    df.loc[
+        df[settings["sh_col"]] < 0,
+        settings["sh_col"],
+    ] = np.nan
+
+    df.loc[
+        df[settings["swe_col"]] < 0,
+        settings["swe_col"],
+    ] = np.nan
+
+    # --------------------------------------------------------
+    # 2.3 Handle duplicate records
+    # --------------------------------------------------------
+
+    # Remove fully identical rows
+    exact_duplicates = int(df.duplicated().sum())
+    df = df.drop_duplicates().copy()
+
+    # Count timestamps that still occur more than once
+    duplicate_timestamp_mask = df[TIME_COL].duplicated(
+        keep=False
+    )
+
+    duplicate_timestamp_rows = int(
+        duplicate_timestamp_mask.sum()
+    )
+
+    duplicate_timestamp_count = int(
+        df.loc[duplicate_timestamp_mask, TIME_COL].nunique()
+    )
+
+    if duplicate_timestamp_count:
+        print(
+            f"Warning: {station_name}: "
+            f"{duplicate_timestamp_count} timestamps have "
+            f"multiple records after exact duplicates were removed."
+        )
+
+        # Aggregate to one record per timestamp.
+        # Valid observations are averaged independently for SH and SWE.
+        df = (
+            df.groupby(TIME_COL, as_index=False)
+            .agg(
+                **{
+                    settings["sh_col"]: (
+                        settings["sh_col"], "mean"
+                    ),
+                    settings["swe_col"]: (
+                        settings["swe_col"], "mean"
+                    ),
+                }
+            )
+        )
+
+    df = df.sort_values(TIME_COL).set_index(TIME_COL)
+
+    # --------------------------------------------------------
+    # 2.4 Calculate daily means and valid measurement counts
+    # --------------------------------------------------------
+
+    sh_col = settings["sh_col"]
+    swe_col = settings["swe_col"]
+
     daily = df.resample("D").agg(
         **{
-            "SH (mm)": (settings["sh_col"], "mean"),
-            "SWE (mm)": (settings["swe_col"], "mean"),
-            "SH valid measurements": (settings["sh_col"], "count"),
-            "SWE valid measurements": (settings["swe_col"], "count"),
+            "SH (mm)": (sh_col, "mean"),
+            "SWE (mm)": (swe_col, "mean"),
+            "SH valid measurements": (sh_col, "count"),
+            "SWE valid measurements": (swe_col, "count"),
         }
     )
 
@@ -137,19 +236,52 @@ def load_station_data(station_name, settings):
     daily = daily.reset_index()
 
     daily["Station"] = station_name
+
+    # Snow year: July-December belong to the following year;
+    # January-June belong to the current year.
     daily["Snow year"] = (
         daily["Date"].dt.year
-        + (daily["Date"].dt.month >= SEASON_START_MONTH).astype(int)
+        + (
+            daily["Date"].dt.month >= SEASON_START_MONTH
+        ).astype(int)
     )
 
+    # --------------------------------------------------------
+    # 2.5 Print data-quality report
+    # --------------------------------------------------------
+
+    print("\n" + "=" * 60)
+    print(station_name)
+    print("=" * 60)
+
+    print("Input file:", file_path.name)
+    print("Period:", df.index.min(), "to", df.index.max())
+    print("Valid timestamped records:", len(df))
+    print("Invalid timestamps removed:", invalid_timestamps)
+    print("Exact duplicate rows removed:", exact_duplicates)
     print(
-        f"{station_name}: {len(df):,} timestamped records; "
-        f"{daily['Date'].min().date()} to {daily['Date'].max().date()}"
+        "Timestamps with multiple records:",
+        duplicate_timestamp_count,
+    )
+    print("Negative SH measurements excluded:", negative_sh_count)
+    print(
+        "Negative SWE measurements excluded:",
+        negative_swe_count,
+    )
+    print("Daily records:", len(daily))
+    print(
+        "Days with valid SH means:",
+        int(daily["SH (mm)"].notna().sum()),
+    )
+    print(
+        "Days with valid SWE means:",
+        int(daily["SWE (mm)"].notna().sum()),
     )
 
     return daily
 
 
+# Load all stations
 daily_data = pd.concat(
     [
         load_station_data(station_name, settings)
@@ -164,54 +296,109 @@ daily_data = daily_data.sort_values(
 
 
 # ============================================================
-# 3. DETERMINE SEASONAL SWE MAXIMA
+# 3. DETERMINE SEASONAL SWE MAXIMA AND COVERAGE
 # ============================================================
 
 def determine_seasonal_maxima(daily):
     """
-    Determine the date of maximum daily mean SWE for each station
-    and snow year. SH at that date is also retained.
+    Determine the maximum daily mean SWE for each station
+    and snow year.
+
+    Record snow depth at the date of the SWE maximum.
+    A season is classified as complete only if:
+      1. Its record spans both seasonal boundaries.
+      2. SH daily coverage meets the defined threshold.
+      3. SWE daily coverage meets the defined threshold.
+
+    Coverage is based on valid daily means, not on the
+    completeness of individual 10-minute observations.
     """
 
     rows = []
 
     for (station, snow_year), group in daily.groupby(
-        ["Station", "Snow year"], sort=True
+        ["Station", "Snow year"],
+        sort=True,
     ):
+
         group = group.sort_values("Date")
 
-        valid_swe = group.dropna(subset=["SWE (mm)"])
+        # July 1 of the previous calendar year through June 30
+        # of the named snow year.
+        season_start = pd.Timestamp(
+            year=int(snow_year) - 1,
+            month=7,
+            day=1,
+        )
 
-        # No SWE observations in this season.
-        if valid_swe.empty:
+        season_end = pd.Timestamp(
+            year=int(snow_year),
+            month=6,
+            day=30,
+        )
+
+        expected_days = (
+            season_end - season_start
+        ).days + 1
+
+        season_data = group.loc[
+            group["Date"].between(
+                season_start,
+                season_end,
+            )
+        ].copy()
+
+        if season_data.empty:
             continue
 
-        # Select the first date if the maximum occurs more than once.
-        max_idx = valid_swe["SWE (mm)"].idxmax()
-        max_row = valid_swe.loc[max_idx]
-
-        # A complete season must have observations spanning the
-        # nominal season boundaries: July 1 through June 30.
-        season_start = pd.Timestamp(
-            year=snow_year - 1, month=7, day=1
-        )
-        season_end = pd.Timestamp(
-            year=snow_year, month=6, day=30
+        # Count valid daily means for both variables
+        valid_sh_days = int(
+            season_data["SH (mm)"].notna().sum()
         )
 
-        # Check the available daily record's temporal coverage.
-        # This checks boundary coverage, not the absence of internal gaps.
-        season_complete = (
+        valid_swe_days = int(
+            season_data["SWE (mm)"].notna().sum()
+        )
+
+        sh_coverage = valid_sh_days / expected_days
+        swe_coverage = valid_swe_days / expected_days
+
+        # Check temporal coverage at the seasonal boundaries
+        boundary_coverage = (
             group["Date"].min() <= season_start
             and group["Date"].max() >= season_end
         )
 
+        season_complete = (
+            boundary_coverage
+            and sh_coverage >= MIN_SEASON_COVERAGE
+            and swe_coverage >= MIN_SEASON_COVERAGE
+        )
+
+        # Only valid SWE observations can define the maximum
+        valid_swe = season_data.dropna(
+            subset=["SWE (mm)"]
+        )
+
+        if valid_swe.empty:
+            continue
+
+        # If several dates share the maximum, select the first
+        max_idx = valid_swe["SWE (mm)"].idxmax()
+        max_row = valid_swe.loc[max_idx]
+
         rows.append(
             {
                 "Station": station,
-                "Snow year": snow_year,
+                "Snow year": int(snow_year),
                 "Season start": season_start,
                 "Season end": season_end,
+                "Boundary coverage": boundary_coverage,
+                "Valid SH days": valid_sh_days,
+                "Valid SWE days": valid_swe_days,
+                "Expected days": expected_days,
+                "SH daily coverage (%)": sh_coverage * 100,
+                "SWE daily coverage (%)": swe_coverage * 100,
                 "Season complete": season_complete,
                 "SWE maximum date": max_row["Date"],
                 "SWE maximum (mm)": max_row["SWE (mm)"],
@@ -227,10 +414,10 @@ seasonal_maxima = determine_seasonal_maxima(daily_data)
 if seasonal_maxima.empty:
     raise ValueError(
         "No seasonal SWE maxima could be calculated. "
-        "Check the SWE column names and source data."
+        "Check the SWE columns and source data."
     )
 
-print("\nSeasonal SWE maxima:")
+print("\nSeasonal SWE maxima and coverage:")
 print(seasonal_maxima.to_string(index=False))
 
 
@@ -240,11 +427,14 @@ print(seasonal_maxima.to_string(index=False))
 
 def assign_phases(daily, maxima):
     """
-    Classify dates before the seasonal SWE maximum as accumulation
-    and dates after it as melting. The maximum date itself is excluded.
+    Dates before the SWE maximum are classified as accumulation;
+    dates after it are classified as melting.
+
+    The maximum date itself is left unclassified.
     """
 
     result = daily.copy()
+
     result["Phase"] = pd.NA
     result["SWE maximum date"] = pd.NaT
     result["Season complete"] = False
@@ -254,6 +444,7 @@ def assign_phases(daily, maxima):
     )
 
     for idx, row in result.iterrows():
+
         key = (row["Station"], row["Snow year"])
 
         if key not in maxima_lookup.index:
@@ -263,40 +454,57 @@ def assign_phases(daily, maxima):
         max_date = max_row["SWE maximum date"]
 
         result.at[idx, "SWE maximum date"] = max_date
+
         result.at[idx, "Season complete"] = bool(
             max_row["Season complete"]
         )
 
         if row["Date"] < max_date:
             result.at[idx, "Phase"] = "Accumulation"
+
         elif row["Date"] > max_date:
             result.at[idx, "Phase"] = "Melting"
-        # The SWE maximum date remains unclassified.
 
     return result
 
 
-daily_data = assign_phases(daily_data, seasonal_maxima)
+daily_data = assign_phases(
+    daily_data,
+    seasonal_maxima,
+)
 
 
 # ============================================================
 # 5. PREPARE DATA FOR REGRESSION
 # ============================================================
 
-# Regressions include only:
-# - complete snow years,
+# Include only:
+# - seasons meeting the completeness criterion,
 # - valid daily means for both variables,
-# - strictly positive SH and SWE,
-# - dates before or after the seasonal SWE maximum.
+# - positive SH and SWE values,
+# - dates before or after the SWE maximum.
+#
+# Zero values are excluded because the analysis focuses on
+# snow-covered conditions. This selection should be stated
+# explicitly in the thesis.
 
-analysis_data = daily_data[
+analysis_data = daily_data.loc[
     daily_data["Season complete"]
     & daily_data["SH (mm)"].notna()
     & daily_data["SWE (mm)"].notna()
     & (daily_data["SH (mm)"] > 0)
     & (daily_data["SWE (mm)"] > 0)
-    & daily_data["Phase"].isin(["Accumulation", "Melting"])
+    & daily_data["Phase"].isin(PHASES)
 ].copy()
+
+print("\nRegression dataset:")
+print("Number of daily observations:", len(analysis_data))
+
+if analysis_data.empty:
+    print(
+        "Warning: No observations meet all regression criteria. "
+        "Regression tables will contain no valid estimates."
+    )
 
 
 # ============================================================
@@ -304,43 +512,72 @@ analysis_data = daily_data[
 # ============================================================
 
 def calculate_regression(group):
-    """Calculate linear regression statistics for SH versus SWE."""
+    """
+    Fit an ordinary least-squares linear regression:
 
-    group = group.dropna(subset=["SH (mm)", "SWE (mm)"])
+        SWE = Intercept + Slope * SH
+
+    Conventional standard errors, p-values and confidence
+    intervals are reported.
+
+    IMPORTANT:
+    These inferential statistics assume independent residuals.
+    They do not correct for temporal autocorrelation.
+    """
+
+    group = group.dropna(
+        subset=["SH (mm)", "SWE (mm)"]
+    )
 
     x = group["SH (mm)"].to_numpy(dtype=float)
     y = group["SWE (mm)"].to_numpy(dtype=float)
 
     n = len(group)
 
-    if n < 3 or np.unique(x).size < 2 or np.unique(y).size < 2:
-        return {
-            "n": n,
-            "Slope": np.nan,
-            "Intercept": np.nan,
-            "R²": np.nan,
-            "Pearson r": np.nan,
-            "p-value": np.nan,
-            "Slope standard error": np.nan,
-            "Slope 95% CI lower (approx.)": np.nan,
-            "Slope 95% CI upper (approx.)": np.nan,
-        }
+    empty_result = {
+        "n": n,
+        "Slope": np.nan,
+        "Intercept": np.nan,
+        "R²": np.nan,
+        "Pearson r": np.nan,
+        "p-value": np.nan,
+        "Slope standard error": np.nan,
+        "Slope 95% CI lower": np.nan,
+        "Slope 95% CI upper": np.nan,
+    }
+
+    if (
+        n < 3
+        or np.unique(x).size < 2
+        or np.unique(y).size < 2
+    ):
+        return empty_result
 
     regression = linregress(x, y)
+
+    # Conventional two-sided 95% t-based confidence interval
+    # for the slope, under standard OLS assumptions.
+    degrees_of_freedom = n - 2
+    t_critical = t.ppf(
+        0.975,
+        df=degrees_of_freedom,
+    )
+
+    slope_se = regression.stderr
 
     return {
         "n": n,
         "Slope": regression.slope,
         "Intercept": regression.intercept,
-        "R²": regression.rvalue**2,
+        "R²": regression.rvalue ** 2,
         "Pearson r": regression.rvalue,
         "p-value": regression.pvalue,
-        "Slope standard error": regression.stderr,
-        "Slope 95% CI lower (approx.)": (
-            regression.slope - 1.96 * regression.stderr
+        "Slope standard error": slope_se,
+        "Slope 95% CI lower": (
+            regression.slope - t_critical * slope_se
         ),
-        "Slope 95% CI upper (approx.)": (
-            regression.slope + 1.96 * regression.stderr
+        "Slope 95% CI upper": (
+            regression.slope + t_critical * slope_se
         ),
     }
 
@@ -352,8 +589,10 @@ def calculate_regression(group):
 pooled_results = []
 
 for station in STATIONS:
-    for phase in ["Accumulation", "Melting"]:
-        subset = analysis_data[
+
+    for phase in PHASES:
+
+        subset = analysis_data.loc[
             (analysis_data["Station"] == station)
             & (analysis_data["Phase"] == phase)
         ]
@@ -380,52 +619,75 @@ print(pooled_results.to_string(index=False))
 
 seasonal_results = []
 
-for (station, snow_year, phase), group in analysis_data.groupby(
-    ["Station", "Snow year", "Phase"], sort=True
-):
-    stats = calculate_regression(group)
+if not analysis_data.empty:
 
-    seasonal_results.append(
-        {
-            "Station": station,
-            "Snow year": snow_year,
-            "Phase": phase,
-            **stats,
-        }
-    )
+    for (station, snow_year, phase), group in analysis_data.groupby(
+        ["Station", "Snow year", "Phase"],
+        sort=True,
+    ):
 
-seasonal_results = pd.DataFrame(seasonal_results)
+        stats = calculate_regression(group)
+
+        seasonal_results.append(
+            {
+                "Station": station,
+                "Snow year": snow_year,
+                "Phase": phase,
+                **stats,
+            }
+        )
+
+seasonal_results = pd.DataFrame(
+    seasonal_results,
+    columns=[
+        "Station",
+        "Snow year",
+        "Phase",
+        "n",
+        "Slope",
+        "Intercept",
+        "R²",
+        "Pearson r",
+        "p-value",
+        "Slope standard error",
+        "Slope 95% CI lower",
+        "Slope 95% CI upper",
+    ],
+)
 
 print("\nRegression results by snow year:")
+
 if seasonal_results.empty:
-    print("No complete seasons with sufficient data for regression.")
+    print("No seasonal regression groups are available.")
 else:
     print(seasonal_results.to_string(index=False))
 
 
 # ============================================================
-# 9. PLOT SH–SWE REGRESSIONS
+# 9. PLOT SH-SWE REGRESSIONS
 # ============================================================
 
 fig, axes = plt.subplots(
-    nrows=2,
+    nrows=len(STATIONS),
     ncols=2,
-    figsize=(14, 11),
-    sharex=False,
-    sharey=False,
+    figsize=(14, 5.5 * len(STATIONS)),
+    squeeze=False,
 )
 
 for row_idx, station in enumerate(STATIONS):
+
     station_color = STATIONS[station]["color"]
 
-    for col_idx, phase in enumerate(["Accumulation", "Melting"]):
+    for col_idx, phase in enumerate(PHASES):
+
         ax = axes[row_idx, col_idx]
 
-        subset = analysis_data[
+        subset = analysis_data.loc[
             (analysis_data["Station"] == station)
             & (analysis_data["Phase"] == phase)
         ]
 
+        # Scatter plot of daily mean values
         ax.scatter(
             subset["SH (mm)"],
             subset["SWE (mm)"],
@@ -438,18 +700,24 @@ for row_idx, station in enumerate(STATIONS):
         stats = calculate_regression(subset)
 
         if np.isfinite(stats["Slope"]):
+
             x_line = np.linspace(
                 subset["SH (mm)"].min(),
                 subset["SH (mm)"].max(),
                 100,
             )
-            y_line = stats["Intercept"] + stats["Slope"] * x_line
+
+            y_line = (
+                stats["Intercept"]
+                + stats["Slope"] * x_line
+            )
 
             ax.plot(
                 x_line,
                 y_line,
                 color="black",
                 linewidth=2,
+                label="OLS regression",
             )
 
             annotation = (
@@ -458,8 +726,12 @@ for row_idx, station in enumerate(STATIONS):
                 f"R² = {stats['R²']:.3f}\n"
                 f"p = {stats['p-value']:.3g}"
             )
+
         else:
-            annotation = f"n = {stats['n']}\nInsufficient variation"
+            annotation = (
+                f"n = {stats['n']}\n"
+                "Insufficient variation"
+            )
 
         ax.text(
             0.05,
@@ -471,7 +743,7 @@ for row_idx, station in enumerate(STATIONS):
             fontsize=9,
             bbox={
                 "facecolor": "white",
-                "alpha": 0.8,
+                "alpha": 0.85,
                 "edgecolor": "lightgray",
             },
         )
@@ -483,17 +755,23 @@ for row_idx, station in enumerate(STATIONS):
 
 fig.suptitle(
     "Snow depth (SH) versus snow water equivalent (SWE)\n"
-    "All available data; complete snow years only",
+    "Daily means; complete snow years; positive values only",
     fontsize=14,
 )
 
 fig.tight_layout(rect=[0, 0, 1, 0.94])
 
 regression_plot_path = (
-    OUTPUT_DIR / "SH_SWE_regression_Akkumulation_Schmelze_all_data.pdf"
+    OUTPUT_DIR
+    / "SH_SWE_regression_accumulation_melting_all_data.pdf"
 )
 
-fig.savefig(regression_plot_path, dpi=300, bbox_inches="tight")
+fig.savefig(
+    regression_plot_path,
+    dpi=300,
+    bbox_inches="tight",
+)
+
 plt.close(fig)
 
 
@@ -509,22 +787,25 @@ fig, axes = plt.subplots(
 )
 
 for i, (station, settings) in enumerate(STATIONS.items()):
+
     ax = axes[i, 0]
     ax_sh = ax.twinx()
 
-    station_maxima = seasonal_maxima[
+    station_maxima = seasonal_maxima.loc[
         seasonal_maxima["Station"] == station
     ].sort_values("SWE maximum date")
 
     if station_maxima.empty:
-        ax.set_title(f"{station}: no seasonal SWE maxima available")
+        ax.set_title(
+            f"{station}: no seasonal SWE maxima available"
+        )
         continue
 
     dates = station_maxima["SWE maximum date"]
     swe_maxima = station_maxima["SWE maximum (mm)"]
     sh_at_max = station_maxima["SH at SWE maximum (mm)"]
 
-    # Main axis: seasonal SWE maxima.
+    # Main axis: seasonal SWE maxima
     ax.plot(
         dates,
         swe_maxima,
@@ -536,7 +817,7 @@ for i, (station, settings) in enumerate(STATIONS.items()):
         label="Seasonal SWE maximum",
     )
 
-    # Secondary axis: SH measured on the SWE maximum date.
+    # Secondary axis: SH on the date of the SWE maximum
     ax_sh.plot(
         dates,
         sh_at_max,
@@ -547,13 +828,18 @@ for i, (station, settings) in enumerate(STATIONS.items()):
         label="SH at SWE maximum date",
     )
 
-    # Mark maxima from incomplete seasons.
-    incomplete = ~station_maxima["Season complete"].to_numpy()
+    # Mark maxima from seasons that do not meet the
+    # completeness criterion
+    incomplete = ~station_maxima["Season complete"]
 
     if incomplete.any():
+
+        incomplete_dates = dates.loc[incomplete]
+        incomplete_swe = swe_maxima.loc[incomplete]
+
         ax.scatter(
-            dates.iloc[np.where(incomplete)[0]],
-            swe_maxima.iloc[np.where(incomplete)[0]],
+            incomplete_dates,
+            incomplete_swe,
             marker="x",
             s=90,
             color="red",
@@ -561,14 +847,19 @@ for i, (station, settings) in enumerate(STATIONS.items()):
             label="Maximum in incomplete season",
         )
 
-    ax.set_title(f"{station}: seasonal SWE maxima and SH")
+    ax.set_title(
+        f"{station}: seasonal SWE maxima and snow depth"
+    )
+
     ax.set_xlabel("Date of seasonal SWE maximum")
     ax.set_ylabel("Seasonal maximum SWE (mm)")
-    ax_sh.set_ylabel("Snow depth SH at SWE maximum date (mm)")
+    ax_sh.set_ylabel(
+        "Snow depth SH at SWE maximum date (mm)"
+    )
 
     ax.grid(True, alpha=0.25)
 
-    # Combine legends from both y-axes.
+    # Combine legends from both y-axes
     lines1, labels1 = ax.get_legend_handles_labels()
     lines2, labels2 = ax_sh.get_legend_handles_labels()
 
@@ -579,23 +870,31 @@ for i, (station, settings) in enumerate(STATIONS.items()):
         fontsize=9,
     )
 
-    locator = AutoDateLocator()
+    locator = mdates.AutoDateLocator()
     ax.xaxis.set_major_locator(locator)
-    ax.xaxis.set_major_formatter(ConciseDateFormatter(locator))
+    ax.xaxis.set_major_formatter(
+        mdates.ConciseDateFormatter(locator)
+    )
 
 fig.suptitle(
     "Seasonal SWE maxima and snow depth at the SWE maximum date\n"
-    "All available data; July–June snow years",
+    "Daily mean SWE; July–June snow years",
     fontsize=14,
 )
 
 fig.tight_layout(rect=[0, 0, 1, 0.94])
 
 maxima_plot_path = (
-    OUTPUT_DIR / "SH_SWE_saisonale_Maxima_all_data.pdf"
+    OUTPUT_DIR
+    / "SH_SWE_seasonal_maxima_all_data.pdf"
 )
 
-fig.savefig(maxima_plot_path, dpi=300, bbox_inches="tight")
+fig.savefig(
+    maxima_plot_path,
+    dpi=300,
+    bbox_inches="tight",
+)
+
 plt.close(fig)
 
 
@@ -604,19 +903,23 @@ plt.close(fig)
 # ============================================================
 
 seasonal_maxima_path = (
-    OUTPUT_DIR / "saisonale_SWE_maxima_all_data.csv"
+    OUTPUT_DIR / "seasonal_SWE_maxima_all_data.csv"
 )
 
 pooled_results_path = (
-    OUTPUT_DIR / "SH_SWE_regression_gesamt_all_data.csv"
+    OUTPUT_DIR / "SH_SWE_pooled_regression_all_data.csv"
 )
 
 seasonal_results_path = (
-    OUTPUT_DIR / "SH_SWE_regression_pro_Schneejahr_all_data.csv"
+    OUTPUT_DIR / "SH_SWE_regression_by_snow_year_all_data.csv"
 )
 
 daily_data_path = (
-    OUTPUT_DIR / "SH_SWE_Tagesdaten_mit_Phase_all_data.csv"
+    OUTPUT_DIR / "SH_SWE_daily_data_with_phase_all_data.csv"
+)
+
+analysis_data_path = (
+    OUTPUT_DIR / "SH_SWE_regression_input_data_all_data.csv"
 )
 
 seasonal_maxima.to_csv(
@@ -643,15 +946,30 @@ daily_data.to_csv(
     encoding="utf-8-sig",
 )
 
+analysis_data.to_csv(
+    analysis_data_path,
+    index=False,
+    encoding="utf-8-sig",
+)
+
 
 # ============================================================
 # 12. SUMMARY
 # ============================================================
 
-print("\nAnalysis complete.")
-print(f"Regression figure: {regression_plot_path}")
-print(f"Seasonal maxima figure: {maxima_plot_path}")
-print(f"Seasonal maxima table: {seasonal_maxima_path}")
-print(f"Pooled regression table: {pooled_results_path}")
-print(f"Seasonal regression table: {seasonal_results_path}")
-print(f"Daily data table: {daily_data_path}")
+print("\n" + "=" * 60)
+print("ANALYSIS COMPLETE")
+print("=" * 60)
+
+print("\nFigures:")
+print("Regression figure:", regression_plot_path)
+print("Seasonal maxima figure:", maxima_plot_path)
+
+print("\nExported tables:")
+print("Seasonal maxima:", seasonal_maxima_path)
+print("Pooled regressions:", pooled_results_path)
+print("Snow-year regressions:", seasonal_results_path)
+print("Daily data:", daily_data_path)
+print("Regression input data:", analysis_data_path)
+
+print("\nOutput directory:", OUTPUT_DIR)
