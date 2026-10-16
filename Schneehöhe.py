@@ -32,7 +32,7 @@ sns.set_theme(style="whitegrid")
 BASE_DIR = Path(__file__).resolve().parent
 
 # Input CSV files remain in the repository directory
-DATA_DIR = BASE_DIR
+DATA_DIR = BASE_DIR / "input"
 
 # Create an output folder for all generated files
 OUTPUT_DIR = BASE_DIR / "output"
