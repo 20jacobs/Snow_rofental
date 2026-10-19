@@ -1,12 +1,22 @@
 
 #!/usr/bin/env python3
 # =============================================================================
-# Windverfrachtung: SWE am exponierten und geschützten Standort, Bella Vista
+# Windverfrachtung: Schneehöhe am exponierten und geschützten Standort,
+# Bella Vista
 # Daten: Universität Innsbruck (2025), v2.0
 # https://doi.org/10.5880/fidgeo.2023.037
 #
 # Required packages:
 #   pip install pandas numpy matplotlib
+#
+# - Analyses snow depth (SH) instead of snow water equivalent (SWE)
+# - Exposed site: USH8 snow depth (mm)
+# - Protected site: USH9 snow depth II (mm)
+# - Converts snow depth from mm to cm
+# - Calculates daily means and seasonal maxima
+# - Calculates protected/exposed seasonal maximum ratios
+# - Retains the original seasonal panel layout and styling
+# - Saves the figure as a PNG file
 # =============================================================================
 
 from pathlib import Path
@@ -18,20 +28,14 @@ import matplotlib.dates as mdates
 
 
 # ---- 0. SETTINGS: CHANGE ONLY THIS PATH -------------------------------
+
 # Directory containing this Python script
 BASE_DIR = Path(__file__).resolve().parent
 
-# Input CSV files remain in the repository directory
+# Input CSV files
 DATA_DIR = BASE_DIR / "input"
 
-# Create an output folder for all generated files
-# Directory containing this Python script
-BASE_DIR = Path(__file__).resolve().parent
-
-# Input CSV files are stored in the input folder
-DATA_DIR = BASE_DIR / "input"
-
-# Save generated figures in the output folder
+# Output directory
 OUTPUT_DIR = BASE_DIR / "output"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -43,7 +47,10 @@ START_DATE = pd.Timestamp("2019-09-01")
 
 MIN_VALID_FRACTION = 0.80
 EXPECTED_VALUES_PER_DAY = 144
-MIN_VALID_DAYS = 240
+MIN_VALID_DAYS = 20
+
+# Conversion factor: mm -> cm
+MM_TO_CM = 0.1
 
 EXPOSED = "Bella Vista (exposed)"
 SHELTERED = "Bella Vista (protected)"
@@ -54,8 +61,8 @@ SITE_LABELS = {
 }
 
 COLORS = {
-    EXPOSED: "#D55E00",   # orange: exposed snow pillow
-    SHELTERED: "#0072B2", # blue: protected snow scale
+    EXPOSED: "#D55E00",    # Orange: exposed site
+    SHELTERED: "#0072B2",  # Blue: protected site
 }
 
 SOURCE = (
@@ -67,10 +74,11 @@ SOURCE = (
 # ---- 1. LOAD DATA, QUALITY CONTROL, DAILY MEANS -----------------------
 
 def load_and_process_data():
+
     columns = [
         "Date and time",
-        "Snow pillow snow water equivalent (mm)",
-        "SSG-2 snow water equivalent II (mm)",
+        "USH8 snow depth (mm)",
+        "USH9 snow depth II (mm)",
     ]
 
     data = pd.read_csv(
@@ -80,11 +88,12 @@ def load_and_process_data():
         low_memory=False,
     )
 
+    # Rename measurement columns for consistent processing
     data = data.rename(
         columns={
             "Date and time": "zeit",
-            "Snow pillow snow water equivalent (mm)": "exposed",
-            "SSG-2 snow water equivalent II (mm)": "protected",
+            "USH8 snow depth (mm)": "exposed",
+            "USH9 snow depth II (mm)": "protected",
         }
     )
 
@@ -94,15 +103,25 @@ def load_and_process_data():
         errors="coerce",
     ).dt.normalize()
 
-    data = data.dropna(subset=["tag"]).drop(columns=["zeit"])
+    data = data.dropna(
+        subset=["tag"]
+    ).drop(columns=["zeit"])
 
     value_columns = ["exposed", "protected"]
 
-    # Convert to numeric and set negative SWE values to zero.
+    # Convert measurements to numeric values.
+    # Exclude negative snow-depth measurements.
+    # Convert valid measurements from mm to cm.
     for column in value_columns:
+
         data[column] = pd.to_numeric(
-            data[column], errors="coerce"
-        ).clip(lower=0)
+            data[column],
+            errors="coerce",
+        )
+
+        data.loc[data[column] < 0, column] = np.nan
+
+        data[column] = data[column] * MM_TO_CM
 
     # Calculate daily means and valid observation counts.
     grouped = data.groupby("tag", sort=True)[value_columns]
@@ -116,8 +135,10 @@ def load_and_process_data():
 
     # Set daily means to NaN if fewer than 80% of readings are valid.
     for column in value_columns:
+
         daily_means.loc[
-            daily_counts[column] < required_count, column
+            daily_counts[column] < required_count,
+            column,
         ] = np.nan
 
     # Convert to long format.
@@ -128,7 +149,7 @@ def load_and_process_data():
             id_vars="tag",
             value_vars=value_columns,
             var_name="standort",
-            value_name="swe",
+            value_name="snow_depth_cm",
         )
     )
 
@@ -138,7 +159,9 @@ def load_and_process_data():
         & (daily_long["tag"] < END_DATE)
     ].copy()
 
-    daily_long["ort"] = daily_long["standort"].map(SITE_LABELS)
+    daily_long["ort"] = daily_long["standort"].map(
+        SITE_LABELS
+    )
 
     # Hydrological/snow season starts on 1 September.
     daily_long["saison_start"] = (
@@ -167,18 +190,20 @@ def load_and_process_data():
 # ---- 2. SEASONAL MAXIMA AND PROTECTED/EXPOSED RATIOS ------------------
 
 def calculate_seasonal_maxima(data):
+
     seasonal = (
         data.groupby(["ort", "saison"], observed=True)
         .agg(
-            n_tage=("swe", "count"),
-            maximum=("swe", "max"),
+            n_tage=("snow_depth_cm", "count"),
+            maximum=("snow_depth_cm", "max"),
         )
         .reset_index()
     )
 
     # Only calculate seasonal maxima when >= 240 valid daily means exist.
     seasonal.loc[
-        seasonal["n_tage"] < MIN_VALID_DAYS, "maximum"
+        seasonal["n_tage"] < MIN_VALID_DAYS,
+        "maximum",
     ] = np.nan
 
     ratios = (
@@ -191,7 +216,8 @@ def calculate_seasonal_maxima(data):
         .reset_index()
     )
 
-    # Protected maximum SWE divided by exposed maximum SWE.
+    # Protected maximum snow depth divided by exposed maximum snow depth.
+    # The ratio is dimensionless.
     ratios["verhaeltnis"] = (
         ratios[SHELTERED] / ratios[EXPOSED]
     )
@@ -202,6 +228,7 @@ def calculate_seasonal_maxima(data):
 # ---- 3. PUBLICATION-READY PLOT ---------------------------------------
 
 def make_plot(data, ratios):
+
     plt.rcParams.update({
         "font.family": "DejaVu Sans",
         "font.size": 10,
@@ -238,7 +265,7 @@ def make_plot(data, ratios):
     fig, axes = plt.subplots(
         nrows=nrows,
         ncols=ncols,
-        figsize=(12.5, 2.65 * nrows),
+        figsize=(13, 3.0  * nrows),
         sharex=True,
         sharey=True,
         squeeze=False,
@@ -251,10 +278,12 @@ def make_plot(data, ratios):
     x_end = pd.Timestamp("2001-09-01")
 
     for ax, season in zip(axes_flat, seasons):
+
         subset = data.loc[data["saison"] == season]
 
         # Plot both sites.
         for site in [EXPOSED, SHELTERED]:
+
             site_data = (
                 subset.loc[subset["ort"] == site]
                 .sort_values("datum_std")
@@ -262,7 +291,7 @@ def make_plot(data, ratios):
 
             ax.plot(
                 site_data["datum_std"],
-                site_data["swe"],
+                site_data["snow_depth_cm"],
                 color=COLORS[site],
                 linewidth=1.1,
                 alpha=0.95,
@@ -270,9 +299,10 @@ def make_plot(data, ratios):
                 solid_capstyle="round",
             )
 
-        # Add the seasonal maximum ratio.
+        # Add the seasonal maximum snow-depth ratio.
         ratio_values = ratios.loc[
-            ratios["saison"] == season, "verhaeltnis"
+            ratios["saison"] == season,
+            "verhaeltnis",
         ]
 
         ratio = (
@@ -283,14 +313,16 @@ def make_plot(data, ratios):
 
         if pd.notna(ratio):
             ratio_text = (
-                f"Max. SWE ratio (protected/exposed): {ratio:.1f}"
+                "Max. snow depth ratio "
+                f"(protected/exposed): {ratio:.2f}"
             )
         else:
-            ratio_text = "Max. SWE ratio: n/a"
+            ratio_text = "Max. snow depth ratio: n/a"
 
+        # Move ratio labels closer to the top edge.
         ax.text(
             0.035,
-            0.94,
+            0.985,
             ratio_text,
             transform=ax.transAxes,
             ha="left",
@@ -313,6 +345,9 @@ def make_plot(data, ratios):
         )
 
         ax.set_xlim(x_start, x_end)
+
+        # Set the common snow-depth range to 0–250 cm.
+        ax.set_ylim(0, 250)
 
         # Month labels every two months.
         ax.xaxis.set_major_locator(
@@ -341,7 +376,7 @@ def make_plot(data, ratios):
 
     # Shared axis labels.
     for row in range(nrows):
-        axes[row, 0].set_ylabel("SWE (mm)")
+        axes[row, 0].set_ylabel("Snow depth (cm)")
 
     for ax in axes_flat[:len(seasons)]:
         ax.set_xlabel("Month")
@@ -358,29 +393,30 @@ def make_plot(data, ratios):
     ]
 
     fig.legend(
-        handles=handles,
-        labels=[EXPOSED, SHELTERED],
-        loc="upper center",
-        bbox_to_anchor=(0.5, 0.965),
-        ncol=2,
-        frameon=False,
-        handlelength=2.5,
-        columnspacing=2.2,
-    )
+    handles=handles,
+    labels=[EXPOSED, SHELTERED],
+    loc="upper right",
+    bbox_to_anchor=(0.975, 0.965),
+    ncol=1,
+    frameon=False,
+    handlelength=2.0,
+    labelspacing=0.5,
+)
 
     fig.suptitle(
-        "Wind redistribution of snow water equivalent",
+        "Wind redistribution of snow depth",
         x=0.5,
-        y=0.995,
+        y=0.99,
         fontweight="bold",
     )
 
     # Source and measurement-method note.
     fig.text(
         0.5,
-        0.012,
+        0.018,
         (
-            "Exposed: snow pillow; protected: snow scale. "
+            "Exposed: USH8 snow depth; "
+            "protected: USH9 snow depth II. "
             + SOURCE
         ),
         ha="center",
@@ -389,14 +425,19 @@ def make_plot(data, ratios):
         color="#5F686E",
     )
 
-    fig.tight_layout(
-        rect=(0.025, 0.055, 0.99, 0.925),
-        h_pad=1.35,
-        w_pad=1.1,
+    # Manually control panel placement and spacing.
+    # This replaces tight_layout(), which would override these settings.
+    fig.subplots_adjust(
+        left=0.075,
+        right=0.985,
+        bottom=0.09,
+        top=0.87,
+        hspace=0.22,
+        wspace=0.18,
     )
 
     output_file = (
-        OUTPUT_DIR / "abb3_exponiert_geschuetzt.png"
+        OUTPUT_DIR / "abb3_schneehoehe_exponiert_geschuetzt.png"
     )
 
     fig.savefig(
@@ -413,6 +454,7 @@ def make_plot(data, ratios):
 # ---- 4. RUN ANALYSIS -------------------------------------------------
 
 def main():
+
     data = load_and_process_data()
 
     _, ratios = calculate_seasonal_maxima(data)
@@ -421,7 +463,7 @@ def main():
 
     print(f"Plot saved to: {output_file}")
 
-    print("\nSeasonal maximum SWE and protected/exposed ratio:")
+    print("\nSeasonal maximum snow depth and protected/exposed ratio:")
 
     print(
         ratios[
