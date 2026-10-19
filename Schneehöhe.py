@@ -47,13 +47,13 @@ MAX_GAP = pd.Timedelta(minutes=20)
 stations = {
       "Bella Vista (protected)": {
             "file": "1_BellaVista_10min_2015-2025.csv",
-            "column": "SSG-2 snow water equivalent II (mm)",
+            "column": "USH9 snow depth II (mm)",
             "color": "#0072B2",
         },
       
         "Bella Vista (exposed)": {
             "file": "1_BellaVista_10min_2015-2025.csv",
-            "column": "Snow pillow snow water equivalent (mm)",
+            "column": "USH8 snow depth (mm)",
             "color": "#D55E00",
         },
         
@@ -297,17 +297,16 @@ ax.text(
     transform=ax.transAxes,
     ha="right",
     va="top",
-    fontsize=9,
+    fontsize=7.5,
     family="monospace",
-    linespacing=1.35,
+    linespacing=1.2,
     bbox=dict(
         boxstyle="round,pad=0.6",
         facecolor="white",
         edgecolor="grey",
-        alpha=0.95,
+        alpha=0.9,
     ),
 )
-
 
 # ==================================================
 # 5. SAVE AND DISPLAY
