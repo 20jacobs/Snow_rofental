@@ -693,7 +693,7 @@ for row_idx, station in enumerate(STATIONS):
             subset["SH (mm)"],
             subset["SWE (mm)"],
             s=12,
-            alpha=0.35,
+            alpha=0.5,
             color=station_color,
             edgecolors="none",
         )
@@ -749,7 +749,10 @@ for row_idx, station in enumerate(STATIONS):
             },
         )
 
-        ax.set_title(f"{station} – {phase}")
+        ax.set_title(
+            f"{station} – {phase}",
+         fontweight="bold",
+         )
         ax.set_xlabel("Snow depth SH (mm)")
         ax.set_ylabel("Snow water equivalent SWE (mm)")
         ax.grid(True, alpha=0.25)
