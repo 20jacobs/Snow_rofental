@@ -240,12 +240,11 @@ ax.set_ylim(0, 3000)
 
 # X-axis: show June and December each year
 ax.xaxis.set_major_locator(
-    mdates.MonthLocator(bymonth=[6, 12])
+    mdates.MonthLocator(bymonth=[12])
 )
 
-# Display months and years
 ax.xaxis.set_major_formatter(
-    mdates.DateFormatter("%m\n%Y")
+    mdates.DateFormatter("%b %Y")
 )
 
 ax.tick_params(axis="x", labelsize=9)

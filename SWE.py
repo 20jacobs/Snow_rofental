@@ -386,7 +386,7 @@ fig.tight_layout()
 
 # Save the PDF in the output folder
 output_file = (
-    OUTPUT_DIR / "swe_two_stations_adjusted_timestamps.pdf"
+    OUTPUT_DIR / "swe_two_stations_adjusted_timestamps.png"
 )
 
 fig.savefig(
