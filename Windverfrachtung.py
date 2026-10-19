@@ -45,12 +45,12 @@ MIN_VALID_FRACTION = 0.80
 EXPECTED_VALUES_PER_DAY = 144
 MIN_VALID_DAYS = 240
 
-EXPOSED = "Bella Vista (exponiert)"
-SHELTERED = "Bella Vista (geschützt)"
+EXPOSED = "Bella Vista (exposed)"
+SHELTERED = "Bella Vista (protected)"
 
 SITE_LABELS = {
-    "exponiert": EXPOSED,
-    "geschuetzt": SHELTERED,
+    "exposed": EXPOSED,
+    "protected": SHELTERED,
 }
 
 COLORS = {
@@ -83,8 +83,8 @@ def load_and_process_data():
     data = data.rename(
         columns={
             "Date and time": "zeit",
-            "Snow pillow snow water equivalent (mm)": "exponiert",
-            "SSG-2 snow water equivalent II (mm)": "geschuetzt",
+            "Snow pillow snow water equivalent (mm)": "exposed",
+            "SSG-2 snow water equivalent II (mm)": "protected",
         }
     )
 
@@ -96,7 +96,7 @@ def load_and_process_data():
 
     data = data.dropna(subset=["tag"]).drop(columns=["zeit"])
 
-    value_columns = ["exponiert", "geschuetzt"]
+    value_columns = ["exposed", "protected"]
 
     # Convert to numeric and set negative SWE values to zero.
     for column in value_columns:
