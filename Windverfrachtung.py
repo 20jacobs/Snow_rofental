@@ -410,21 +410,6 @@ def make_plot(data, ratios):
         fontweight="bold",
     )
 
-    # Source and measurement-method note.
-    fig.text(
-        0.5,
-        0.018,
-        (
-            "Exposed: USH8 snow depth; "
-            "protected: USH9 snow depth II. "
-            + SOURCE
-        ),
-        ha="center",
-        va="bottom",
-        fontsize=7.5,
-        color="#5F686E",
-    )
-
     # Manually control panel placement and spacing.
     # This replaces tight_layout(), which would override these settings.
     fig.subplots_adjust(
