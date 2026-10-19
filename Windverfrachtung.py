@@ -18,13 +18,25 @@ import matplotlib.dates as mdates
 
 
 # ---- 0. SETTINGS: CHANGE ONLY THIS PATH -------------------------------
-DATA_DIR = Path(
-    r"C:/Users/JKnap/Documents/Master/EU Gebirgsforschung/Daten"
-)
+# Directory containing this Python script
+BASE_DIR = Path(__file__).resolve().parent
 
-OUTPUT_DIR = DATA_DIR.parent / "Abbildungen"
-INPUT_FILE = DATA_DIR / "1_BellaVista_10min_2015-2025.csv"
+# Input CSV files remain in the repository directory
+DATA_DIR = BASE_DIR / "input"
+
+# Create an output folder for all generated files
+# Directory containing this Python script
+BASE_DIR = Path(__file__).resolve().parent
+
+# Input CSV files are stored in the input folder
+DATA_DIR = BASE_DIR / "input"
+
+# Save generated figures in the output folder
+OUTPUT_DIR = BASE_DIR / "output"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# Input file
+INPUT_FILE = DATA_DIR / "1_BellaVista_10min_2015-2025.csv"
 
 END_DATE = pd.Timestamp("2025-09-01")
 START_DATE = pd.Timestamp("2019-09-01")
