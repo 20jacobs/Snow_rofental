@@ -77,8 +77,8 @@ def load_and_process_data():
 
     columns = [
         "Date and time",
-        "USH8 snow depth (mm)",
         "USH9 snow depth II (mm)",
+        "USH8 snow depth (mm)",
     ]
 
     data = pd.read_csv(
