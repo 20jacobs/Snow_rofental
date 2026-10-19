@@ -49,18 +49,23 @@ TIME_COL = "Date and time"
 MAX_GAP = pd.Timedelta(minutes=20)
 
 STATIONS = {
-    "Bella Vista": {
+    "Bella Vista (protected)": {
         "file": "1_BellaVista_10min_2015-2025.csv",
         "column": "SSG-2 snow water equivalent II (mm)",
-        "color": "steelblue",
+        "color": "#0072B2",
     },
+    "Bella Vista (exposed)": {
+        "file": "1_BellaVista_10min_2015-2025.csv",
+        "column": "Snow pillow snow water equivalent (mm)",
+        "color": "#D55E00",
+    },
+    
     "Proviantdepot": {
         "file": "3_Proviantdepot_10min_2019-2025.csv",
         "column": "SSG-2 snow water equivalent (mm)",
         "color": "forestgreen",
     },
 }
-
 
 # ============================================================
 # 2. LOAD AND CLEAN DATA
@@ -328,8 +333,6 @@ for station in STATIONS:
         f"Missing/invalid: {values['missing']:,}",
         f"Negative excluded: {values['negative_removed']:,}",
         f"Invalid timestamps: {values['invalid_timestamps']:,}",
-        f"Duplicate timestamps: {values['duplicate_timestamps']:,}",
-        f"Gaps > 20 min: {values['large_gaps']:,}",
         "",
     ])
 
@@ -361,7 +364,7 @@ ax.text(
 # ============================================================
 
 ax.xaxis.set_major_locator(
-    mdates.MonthLocator(bymonth=[6, 12])
+    mdates.MonthLocator(bymonth=[12])
 )
 
 ax.xaxis.set_major_formatter(

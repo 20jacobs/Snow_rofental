@@ -45,11 +45,18 @@ TIME_COL = "Date and time"
 MAX_GAP = pd.Timedelta(minutes=20)
 
 stations = {
-    "Bella Vista": {
-        "file": "1_BellaVista_10min_2015-2025.csv",
-        "column": "USH9 snow depth II (mm)",
-        "color": "steelblue",
-    },
+      "Bella Vista (protected)": {
+            "file": "1_BellaVista_10min_2015-2025.csv",
+            "column": "SSG-2 snow water equivalent II (mm)",
+            "color": "#0072B2",
+        },
+      
+        "Bella Vista (exposed)": {
+            "file": "1_BellaVista_10min_2015-2025.csv",
+            "column": "Snow pillow snow water equivalent (mm)",
+            "color": "#D55E00",
+        },
+        
     "Latschbloder": {
         "file": "2_Latschbloder_10min_2013-2025.csv",
         "column": "USH8 snow depth (mm)",
@@ -310,7 +317,7 @@ ax.text(
 fig.tight_layout()
 
 # Save the PDF in the output folder
-output_file = OUTPUT_DIR / "snow_depth_three_stations_cleaned.pdf"
+output_file = OUTPUT_DIR / "snow_depth_three_stations_cleaned.png"
 
 fig.savefig(
     output_file,

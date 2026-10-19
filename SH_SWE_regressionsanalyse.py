@@ -62,12 +62,13 @@ EXPECTED_INTERVAL_MINUTES = 10
 MIN_SEASON_COVERAGE = 0.90
 
 STATIONS = {
-    "Bella Vista": {
+    "Bella Vista (protected)": {
         "file": "1_BellaVista_10min_2015-2025.csv",
         "sh_col": "USH9 snow depth II (mm)",
         "swe_col": "SSG-2 snow water equivalent II (mm)",
         "color": "steelblue",
     },
+    
     "Proviantdepot": {
         "file": "3_Proviantdepot_10min_2019-2025.csv",
         "sh_col": "USH9 snow depth (mm)",
@@ -763,7 +764,7 @@ fig.tight_layout(rect=[0, 0, 1, 0.94])
 
 regression_plot_path = (
     OUTPUT_DIR
-    / "SH_SWE_regression_accumulation_melting_all_data.pdf"
+    / "SH_SWE_regression_accumulation_melting_all_data.png"
 )
 
 fig.savefig(
@@ -886,7 +887,7 @@ fig.tight_layout(rect=[0, 0, 1, 0.94])
 
 maxima_plot_path = (
     OUTPUT_DIR
-    / "SH_SWE_seasonal_maxima_all_data.pdf"
+    / "SH_SWE_seasonal_maxima_all_data.png"
 )
 
 fig.savefig(
